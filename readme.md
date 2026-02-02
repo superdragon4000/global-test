@@ -209,7 +209,6 @@ catch any error:
 
 # 3. Edge cases
 
-Коротко и по делу.
 
 ---
 
