@@ -115,79 +115,85 @@
 
 ---
 
-## Псевдокод
+## Псевдокод обработчика webhook
 
+```pseudo
 function handleWebhook(request):
 
-rawBody = request.rawBody
-signature = request.headers["x-signature"]
-body = request.json
+    rawBody = request.rawBody
+    signature = request.headers["x-signature"]
+    body = request.json
 
-// 1. Валидация входа
-if body.id  is empty OR body.eventType is empty OR body.data.paymentId is empty:
-return 400
+    // 1. Валидация входа
+    if body.id is empty OR body.eventType is empty OR body.data.paymentId is empty:
+        return 400
 
-// 2. Проверка подписи
-if !verifySignature(rawBody, signature, SECRET):
-return 400
+    // 2. Проверка подписи
+    if !verifySignature(rawBody, signature, SECRET):
+        return 400
 
-externalEventId = body.id
-externalPaymentId = body.data.paymentId
+    externalEventId = body.id
+    externalPaymentId = body.data.paymentId
 
-// 3. Сохраняем webhook_event
-try:
-insert webhook_event(received)
-catch unique_violation on external_event_id:
-return 200  // дубликат webhook
+    // 3. Сохраняем webhook_event
+    try:
+        insert webhook_event(status = received)
+    catch unique_violation on external_event_id:
+        return 200  // дубликат webhook
 
-// 4. Проверка дубликата платежа
-existingPayment = find payment by externalPaymentId
+    // 4. Проверка дубликата платежа
+    existingPayment = find payment by externalPaymentId
 
-if existingPayment exists AND existingPayment.status  == succeeded:
-mark webhook_event as duplicate
-return 200
+    if existingPayment exists AND existingPayment.status == succeeded:
+        mark webhook_event as duplicate
+        return 200
 
-// 5. Транзакция
-begin transaction:
+    // 5. Транзакция
+    begin transaction:
 
-mark webhook_event as validated
+        mark webhook_event as validated
 
-// 5.1 Находим или создаём user
-if email exists:
-user = find user by email
-if not found: create user
-else if customerId exists:
-user = find user by external_customer_id
-if not found: create user
-else:
-user = create technical user
+        // 5.1 Находим или создаём user
+        if email exists:
+            user = find user by email
+            if not found:
+                create user
+        else if customerId exists:
+            user = find user by external_customer_id
+            if not found:
+                create user
+        else:
+            user = create technical user
 
-// 5.2 Находим или создаём подписку
-subscription = find active subscription(user, plan) FOR UPDATE
+        // 5.2 Находим или создаём подписку
+        subscription = find active subscription(user, plan) FOR UPDATE
 
-if not found:
-create new subscription(active, period_start=now, period_end=now+plan_duration)
-else:
-base = max(now, subscription.current_period_end)
-subscription.current_period_end = base + plan_duration
-save subscription
+        if not found:
+            create new subscription(
+                status = active,
+                period_start = now,
+                period_end = now + plan_duration
+            )
+        else:
+            base = max(now, subscription.current_period_end)
+            subscription.current_period_end = base + plan_duration
+            save subscription
 
-// 5.3 Создаём или обновляем payment
-if existingPayment exists:
-update payment with user_id, subscription_id, succeeded
-else:
-create payment with succeeded
+        // 5.3 Создаём или обновляем payment
+        if existingPayment exists:
+            update payment with user_id, subscription_id, status = succeeded
+        else:
+            create payment with status = succeeded
 
-mark webhook_event as processed
+        mark webhook_event as processed
 
-commit transaction
+    commit transaction
 
-return 200
+    return 200
 
 catch any error:
-mark webhook_event as failed
-return 500
-
+    mark webhook_event as failed
+    return 500
 
 ---
 
